@@ -279,17 +279,22 @@ class Item : public GameObject {
 private:
     bool isUsable;
     bool isPickable;
+    bool isAvailable;
     std::function<void()> useEffect;
     std::string useDescription;
 
 public:
     Item(const std::string& n, const std::string& desc, bool usable = false, bool pickable = true) 
-        : GameObject(n, desc), isUsable(usable), isPickable(pickable), useDescription("No specific use instructions.") {}
+        : GameObject(n, desc), isUsable(usable), isPickable(pickable), isAvailable(false), useDescription("No specific use instructions.") {}
 
     void setUseEffect(std::function<void()> effect, const std::string& useDesc) {
         useEffect = effect;
         useDescription = useDesc;
         isUsable = true;
+    }
+
+    void makeAvailable() {
+        isAvailable = true;
     }
 
     bool canUse() const { return isUsable; }
@@ -302,14 +307,18 @@ public:
         }
     }
 
-    void display() const override {
+void display() const override {
         std::cout << AnsiArt::YELLOW << "Item: " << name << AnsiArt::RESET << std::endl;
         std::cout << description << std::endl;
-        if (isUsable) {
-            std::cout << "Usage: " << useDescription << std::endl;
-        }
-        if (isPickable) {
-            std::cout << "(Can be picked up)" << std::endl;
+        if (isAvailable) {
+            if (isUsable) {
+                std::cout << "Usage: " << useDescription << std::endl;
+            }
+            if (isPickable) {
+                std::cout << "(Can be picked up)" << std::endl;
+            }
+        } else {
+            std::cout << "(Item not yet available)" << std::endl;
         }
     }
 };
@@ -319,6 +328,7 @@ protected:
     Stat<int> health;
     Stat<int> energy;
     std::vector<std::shared_ptr<Item>> inventory;
+
 
 public:
     Character(const std::string& n, const std::string& desc, int h, int e) 
@@ -355,6 +365,7 @@ class Player : public Character {
 private:
     int experience;
     std::map<std::string, bool> questFlags;
+    std::map<std::string, std::shared_ptr<Item>> itemMap;
     int totalSteps;
     int itemsCollected;
 
@@ -397,17 +408,29 @@ public:
     bool hasQuestFlag(const std::string& flag) const {
         return questFlags.count(flag) > 0;
     }
+
+    bool hasItem(const std::string& itemName) const {
+        return itemMap.count(itemName) > 0;
+    }
+
+    void addItem(std::shared_ptr<Item> item) {
+        itemMap[item->getName()] = item;
+        inventory.push_back(item);
+    }
 };
 
 class Location {
 private:
     std::string name;
     std::string description;
-    std::map<std::string, std::string> interactions;
+    std::map<std::string, std::shared_ptr<Item>> itemMap;
     std::vector<std::shared_ptr<Item>> items;
     std::vector<std::string> availableInteractions;
 
 public:
+
+    std::map<std::string, std::string> interactions;
+
     Location(const std::string& n, const std::string& desc) 
         : name(n), description(desc) {}
 
@@ -420,25 +443,44 @@ public:
         return availableInteractions;
     }
 
+    std::shared_ptr<Item> getItemByName(const std::string& itemName) {
+        auto it = itemMap.find(itemName);
+        if (it != itemMap.end()) {
+            return it->second;
+        }
+        return nullptr;
+    }
+
     void addItem(std::shared_ptr<Item> item) {
+        itemMap[item->getName()] = item;
         items.push_back(item);
     }
 
     void removeItem(const std::string& itemName) {
-        auto newEnd = std::remove_if(items.begin(), items.end(),
-            [&itemName](const std::shared_ptr<Item>& item) {
-                return item->getName() == itemName;
-            });
-        items.erase(newEnd, items.end());
+        auto it = std::find_if(items.begin(), items.end(), [&](const std::shared_ptr<Item>& item) {
+            return item->getName() == itemName;
+        });
+        if (it != items.end()) {
+            items.erase(it);
+        }
+        itemMap.erase(itemName);
     }
 
     std::string getName() const { return name; }
     std::string getDescription() const { return description; }
     
-    std::string interact(const std::string& key) const {
+    std::string interact(const std::string& key, Player* player) const {
+
         auto it = interactions.find(key);
-        return (it != interactions.end()) ? it->second : "Nothing interesting happens.";
+        if (it != interactions.end()) {
+            if (key == "hack terminal" && !player->hasItem("Keycard")) {
+                return "The terminal is locked. You need a keycard to access it.";
+            }
+            return it->second;
+        }
+        return "Nothing interesting happens.";
     }
+    
 
     std::vector<std::shared_ptr<Item>> getItems() const {
         return items;
@@ -463,6 +505,17 @@ private:
         AnsiArt::printCentered("SPACE DYSTOPIA: THE LAST FRONTIER");
         AnsiArt::printCentered("================================");
         AnsiArt::AsciiArt::drawSpacestation();
+        std::cout << AnsiArt::RESET << std::endl;
+    }
+
+    
+    void displayendTitle() {
+        std::cout << AnsiArt::CLEAR_SCREEN;
+        std::cout << AnsiArt::BLUE;
+        AnsiArt::printCentered("================================");
+        AnsiArt::printCentered("BYEEEEEE!");
+        AnsiArt::printCentered("================================");
+        typewriterEffect( player->getName() + ", will meet again soon.");
         std::cout << AnsiArt::RESET << std::endl;
     }
 
@@ -533,6 +586,11 @@ private:
         locations[3].addItem(spacesuit);
         locations[2].addItem(emp);
 
+        locations[0].getItemByName("Datapad")->makeAvailable();
+        locations[1].getItemByName("Keycard")->makeAvailable();
+        locations[2].getItemByName("EMP Device")->makeAvailable();
+        locations[3].getItemByName("Spacesuit")->makeAvailable();
+
         locations[0].addInteraction("examine workbench",
             "You find various repair tools and a hidden datapad.");
         
@@ -591,17 +649,47 @@ private:
     }
     */
 
+    void runDatapadEffect() {
+        std::cout << "You carefully read through the classified information..." << std::endl;
+        std::cout << "The data reveals coordinates for a potentially habitable planet beyond Pluto." << std::endl;
+        std::cout << "This could be humanity's best chance for survival!" << std::endl;
+        player->setQuestFlag("read_classified_info");
+        player->gainExperience(20);
+    }
+    void runEMPEffect() {
+        if (player->hasItem("EMP Device")) {
+            std::cout << "EMP deployed successfully!" << std::endl;
+            // EMP does extra damage to robots
+            return;
+        }
+        std::cout << "You don't have an EMP device to use." << std::endl;
+    }
+
     bool checkWinCondition() {
         return player->hasQuestFlag("read_classified_info") && 
+               player->hasQuestFlag("terminal_hacked") &&
                player->hasQuestFlag("security_defeated") && 
                player->hasQuestFlag("spacesuit_equipped");
     }
 
+    void interact(const std::string& key) {
+        auto it = locations[currentLocation].interactions.find(key);
+        if (it != locations[currentLocation].interactions.end()) {
+            if (key == "hack terminal" && !player->hasItem("Keycard")) {
+                std::cout << "The terminal is locked. You need a keycard to access it." << std::endl;
+                return;
+            }
+            typewriterEffect(it->second);
+        } else {
+            std::cout << "Nothing interesting happens." << std::endl;
+        }
+    }
+
     void handleCombat(std::shared_ptr<CombatEntity> enemy) {
         std::cout << "\nCombat with " << enemy->getName() << " initiated!" << std::endl;
-        
+
         auto playerCombat = std::make_shared<CombatPlayer>(player->getName());
-        
+
         while (enemy->isAlive() && playerCombat->isAlive()) {
             // Player turn
             std::cout << "\n1. Attack\n2. Use EMP (if available)\n";
@@ -610,29 +698,38 @@ private:
             std::cin.ignore();
 
             int playerDamage = 0;
-            if (choice == 2 && player->getInventory().size() > 0) {
+            if (choice == 2 && player->hasItem("EMP Device")) {
                 // EMP does extra damage to robots
                 playerDamage = playerCombat->calculateDamage() * 2;
                 std::cout << "EMP deployed successfully!" << std::endl;
-            } else {
+            }
+            else if (choice == 1 ) {
+                std::cout << "You do a Normal Attack" << std::endl;
+                playerDamage = playerCombat->calculateDamage();
+            }
+            else {
+                std::cout << "You do not have an EMP! \n You do a Normal Attack" << std::endl;
                 playerDamage = playerCombat->calculateDamage();
             }
 
             enemy->takeDamage(playerDamage);
             typewriterEffect("You deal " + std::to_string(playerDamage) + " damage!");
-            
 
-        if (!enemy->isAlive()) {
-            typewriterEffect("You defeated " + enemy->getName() + "!");
-            player->setQuestFlag("security_defeated");
-            player->gainExperience(50);
-        }
 
-            // Enemy turn
-            int enemyDamage = enemy->calculateDamage();
-            playerCombat->takeDamage(enemyDamage);
-            typewriterEffect(enemy->getName() + " deals " + std::to_string(enemyDamage) + " damage!");
-            
+            if (!enemy->isAlive()) {
+                typewriterEffect("You defeated " + enemy->getName() + "!");
+                player->setQuestFlag("security_defeated");
+                player->gainExperience(50);
+                player->display();
+            }
+
+                // Enemy turn
+            if (choice != 2 && !player->hasItem("EMP")) {
+                int enemyDamage = enemy->calculateDamage();
+                playerCombat->takeDamage(enemyDamage);
+                typewriterEffect(enemy->getName() + " deals " + std::to_string(enemyDamage) + " damage!");
+
+            }
             std::cout << "\nYour Health: " << playerCombat->getHealth() << std::endl;
             std::cout << enemy->getName() << "'s Health: " << enemy->getHealth() << std::endl;
         }
@@ -646,16 +743,16 @@ public:
             std::cout << "\nEnter your name: ";
             std::string playerName;
             std::getline(std::cin, playerName);
-            
+
             if (playerName.empty()) {
                 throw std::invalid_argument("Name cannot be empty!");
             }
-            
+
             player = std::make_unique<Player>(playerName);
             initializeLocations();
             initializeQuests();
             initializeEnemies();
-            
+
         } catch (const std::exception& e) {
             std::cerr << "Error during game initialization: " << e.what() << std::endl;
             throw;
@@ -666,7 +763,7 @@ public:
         std::cout << AnsiArt::BLUE << "\nLocation: " << locations[currentLocation].getName() 
                   << AnsiArt::RESET << std::endl;
         std::cout << locations[currentLocation].getDescription() << std::endl;
-        
+
         // Display available items
         auto items = locations[currentLocation].getItems();
         if (!items.empty()) {
@@ -686,9 +783,9 @@ public:
     void displayEndGameStats() {
         std::cout << AnsiArt::YELLOW << "\n=== Final Statistics ===" << AnsiArt::RESET << std::endl;
         player->display();
-        
+
         std::cout << "Locations explored: " << currentLocation + 1 << "/" << locations.size() << std::endl;
-        
+
     }
 
     void pickupItem() {
@@ -700,7 +797,9 @@ public:
 
         std::cout << "\nAvailable items to pick up:" << std::endl;
         for (size_t i = 0; i < items.size(); ++i) {
-            std::cout << i + 1 << ". " << items[i]->getName() << ": " << items[i]->getDescription() << std::endl;
+            if (items[i]->canPickup()) {
+                std::cout << i + 1 << ". " << items[i]->getName() << ": " << items[i]->getDescription() << std::endl;
+            }
         }
 
         std::cout << "Choose item to pick up (1-" << items.size() << ") or 0 to cancel: ";
@@ -708,28 +807,37 @@ public:
         std::cin >> choice;
         std::cin.ignore();
 
-        if (choice > 0 && choice <= static_cast<int>(items.size())) {
-            auto item = items[choice - 1];
-            if (item->canPickup()) {
-                player->addItem(item);
-                locations[currentLocation].removeItem(item->getName());
-                player->incrementItemsCollected();
-                std::cout << "Picked up " << item->getName() << std::endl;
-                player->gainExperience(5);
-            } else {
-                std::cout << "This item cannot be picked up." << std::endl;
-            }
+
+    if (choice > 0 && choice <= static_cast<int>(items.size())) {
+        auto item = items[choice - 1];
+        if (item->canPickup()) {
+            player->addItem(item);
+            locations[currentLocation].removeItem(item->getName());
+            player->incrementItemsCollected();
+            std::cout << "Picked up " << item->getName() << std::endl;
+            
+            if (item->canUse()) {
+                std::cout << "\nUsing Item " << item->getName() << "..." << std::endl;
+                item->use();
+                }
+
+
+            player->gainExperience(5);
+        } else {
+            std::cout << "This item is not yet available." << std::endl;
         }
     }
-
+}
     void run() {
         try {
             displayTitle();
+            typewriterEffect("You are " + player->getName() + 
+                           ", a maintenance worker on Europa Station.");
             typewriterEffect("\nWelcome to Space Station Europa. Your mission: Escape and reveal the truth.");
-            
+
             while (!gameOver && !hasEscaped) {
                 displayLocation();
-                
+
                 std::cout << "\nOptions:\n";
                 std::cout << "1. Move to another location\n";
                 std::cout << "2. Interact with environment\n";
@@ -737,12 +845,12 @@ public:
                 std::cout << "4. Check inventory\n";
                 std::cout << "5. Check status\n";
                 std::cout << "6. Quit\n";
-                
+
                 int choice;
                 std::cout << "\nEnter your choice (1-8): ";
                 std::cin >> choice;
                 std::cin.ignore();
-                
+
                 switch (choice) {
                     case 1: {
                         std::cout << "\nAvailable locations:\n";
@@ -764,18 +872,19 @@ public:
                         for (size_t i = 0; i < availableInteractions.size(); ++i) {
                             std::cout << i + 1 << ". " << availableInteractions[i] << std::endl;
                         }
-                        
+
                         if (!availableInteractions.empty()) {
                             std::cout << "Choose interaction: ";
                             int interactionChoice;
                             std::cin >> interactionChoice;
                             std::cin.ignore();
-                            
+
                             if (interactionChoice >= 1 && interactionChoice <= static_cast<int>(availableInteractions.size())) {
                                 std::string action = availableInteractions[interactionChoice - 1];
-                                std::string result = locations[currentLocation].interact(action);
+                                //std::string result = locations[currentLocation].interact(action);
+                                std::string result = locations[currentLocation].interact(action, player.get());
                                 typewriterEffect(result);
-                                
+
                                 if (action == "hack terminal") {
                                     player->setQuestFlag("terminal_hacked");
                                     handleCombat(enemies[0]);
@@ -807,7 +916,9 @@ public:
                         break;
                     }
                     case 6:
+
                         gameOver = true;
+                        displayendTitle();
                         break;
                     default:
                         std::cout << "Invalid choice." << std::endl;
